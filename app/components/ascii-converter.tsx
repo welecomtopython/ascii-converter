@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { GripVertical, Upload, Download } from "lucide-react"
+import { GripVertical, Upload, Download, Camera } from "lucide-react"
 import { cn } from "@/lib/utils" // Import cn utility
 import { EmailSubmissionModal } from "@/components/email-submission-modal" // Import the new modal
+import { WhatsAppIcon } from "./svg"
 
 // Define a type for colored ASCII characters
 type ColoredChar = {
@@ -58,7 +59,8 @@ export default function AsciiConverter() {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileInputGalleryRef = useRef<HTMLInputElement>(null)
+  const fileInputCameraRef = useRef<HTMLInputElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const outputCanvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -382,28 +384,69 @@ export default function AsciiConverter() {
     img.src = src
   }
 
-  const handleFileUpload = (file: File) => {
-    if (!file.type.startsWith("image/")) {
-      setError("Please upload an image file")
-      return
-    }
+  const handleFileUpload = async (file: File) => {
+    const isHeicLike =
+      file.type === "image/heic" ||
+      file.type === "image/heif" ||
+      /\.(heic|heif)$/i.test(file.name)
 
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      if (e.target?.result) {
-        loadImage(e.target.result as string)
+    try {
+      let fileToRead: Blob = file
+
+      if (isHeicLike) {
+        try {
+          const heic2any = (await import("heic2any")).default as (
+            options: { blob: Blob; toType?: string; quality?: number },
+          ) => Promise<Blob | Blob[]>
+
+          const converted = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.92 })
+          fileToRead = Array.isArray(converted) ? converted[0] : converted
+        } catch (convErr) {
+          console.error("HEIC conversion failed:", convErr)
+          setError("تعذر تحويل صورة HEIC. يرجى اختيار صورة بصيغة مدعومة.")
+          return
+        }
       }
+
+      // Basic image type guard after potential conversion
+      const resultingType = (fileToRead as any).type || file.type
+      if (!resultingType.startsWith("image/")) {
+        setError("Please upload an image file")
+        return
+      }
+
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          loadImage(e.target.result as string)
+        }
+      }
+      reader.onerror = () => {
+        setError("Failed to read file")
+      }
+      reader.readAsDataURL(fileToRead)
+    } catch (err) {
+      console.error("Upload processing error:", err)
+      setError("حدث خطأ أثناء معالجة الصورة")
     }
-    reader.onerror = () => {
-      setError("Failed to read file")
-    }
-    reader.readAsDataURL(file)
   }
 
   const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       handleFileUpload(e.target.files[0])
     }
+    // Allow selecting the same file again by resetting the input
+    e.target.value = ""
+  }
+
+  const openCamera = () => {
+    if (!fileInputCameraRef.current) return
+    fileInputCameraRef.current.click()
+  }
+
+  const openPhotoPicker = () => {
+    if (!fileInputGalleryRef.current) return
+    fileInputGalleryRef.current.click()
   }
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -436,6 +479,75 @@ export default function AsciiConverter() {
 
   const startDragging = () => {
     setIsDragging(true)
+  }
+
+  const supportsDownloadAttribute = (): boolean => {
+    if (typeof document === "undefined") return false
+    const link = document.createElement("a")
+    return typeof (link as any).download !== "undefined"
+  }
+
+  const shareBlobIfPossible = async (blob: Blob, filename: string, title: string) => {
+    try {
+      const navAny = navigator as any
+      if (navAny && typeof navAny.share === "function" && typeof navAny.canShare === "function") {
+        const file = new File([blob], filename, { type: blob.type })
+        if (navAny.canShare({ files: [file] })) {
+          await navAny.share({ files: [file], title })
+          return true
+        }
+      }
+    } catch {}
+    return false
+  }
+
+  const downloadBlob = async (blob: Blob, filename: string, title: string) => {
+    // Try Web Share API first (best UX on mobile)
+    const shared = await shareBlobIfPossible(blob, filename, title)
+    if (shared) return
+
+    const url = URL.createObjectURL(blob)
+    try {
+      if (supportsDownloadAttribute()) {
+        const a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      } else {
+        // iOS Safari fallback - open in a new tab; user can Save Image / Share
+        window.open(url, "_blank")
+      }
+    } finally {
+      // Delay revocation slightly to allow navigation/download to begin
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+    }
+  }
+
+  const handleDownloadPng = () => {
+    if (!outputCanvasRef.current || !asciiArt) {
+      setError("لا يوجد فن ASCII للتنزيل.")
+      return
+    }
+    outputCanvasRef.current.toBlob(async (blob) => {
+      if (!blob) {
+        setError("تعذر إنشاء صورة PNG")
+        return
+      }
+      await downloadBlob(blob, "ascii-art.png", "ASCII Art PNG")
+    }, "image/png")
+  }
+
+  const handleDownloadTxt = async () => {
+    if (!asciiArt) {
+      setError("لا يوجد فن ASCII للتنزيل.")
+      return
+    }
+    const encoder = new TextEncoder()
+    const bytes = encoder.encode(asciiArt)
+    const blob = new Blob([bytes], { type: "text/plain;charset=utf-8" })
+    await downloadBlob(blob, "ascii-art.txt", "ASCII Art Text")
   }
 
   return (
@@ -504,13 +616,7 @@ export default function AsciiConverter() {
               rel="noopener noreferrer"
               className="transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-white/50 rounded block"
             >
-              <img
-                src="https://v0.dev/chat-static/button.svg"
-                alt="Open in v0"
-                width="99"
-                height="32"
-                className="drop-shadow-md"
-              />
+            <WhatsAppIcon/>
             </a>
           </div>
         </div>
@@ -629,14 +735,44 @@ export default function AsciiConverter() {
 
               <div className="hidden">
                 <canvas ref={canvasRef} width="300" height="300"></canvas>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/*"
-                  onChange={handleFileInputChange}
-                  className="hidden"
-                />
               </div>
+              {/* Gallery picker (no capture) */}
+              <input
+                type="file"
+                ref={fileInputGalleryRef}
+                accept="image/*,.heic,.heif"
+                onChange={handleFileInputChange}
+                style={{
+                  position: "absolute",
+                  width: 1,
+                  height: 1,
+                  padding: 0,
+                  margin: -1,
+                  overflow: "hidden",
+                  clip: "rect(0, 0, 0, 0)",
+                  whiteSpace: "nowrap",
+                  border: 0,
+                }}
+              />
+              {/* Camera picker (with capture) */}
+              <input
+                type="file"
+                ref={fileInputCameraRef}
+                accept="image/*,.heic,.heif"
+                onChange={handleFileInputChange}
+                capture="environment"
+                style={{
+                  position: "absolute",
+                  width: 1,
+                  height: 1,
+                  padding: 0,
+                  margin: -1,
+                  overflow: "hidden",
+                  clip: "rect(0, 0, 0, 0)",
+                  whiteSpace: "nowrap",
+                  border: 0,
+                }}
+              />
 
               {/* Modified button layout to be stacked vertically */}
               <div className="flex flex-col gap-2 pt-4 border-t border-stone-700">
@@ -660,6 +796,25 @@ export default function AsciiConverter() {
                   {sidebarNarrow ? "نسخ" : "نسخ فن ASCII"}
                 </Button>
 
+                <div className="flex flex-col md:flex-row gap-2">
+                  <Button
+                    onClick={handleEmailSubmissionTrigger}
+                    className="flex-1 bg-stone-700 hover:bg-stone-600 text-stone-200 border-stone-600"
+                    disabled={loading || !imageLoaded || !asciiArt}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    إرسال الصورة عبر البريد
+                  </Button>
+                  <Button
+                    onClick={handleDownloadTxt}
+                    className="flex-1 bg-stone-700 hover:bg-stone-600 text-stone-200 border-stone-600"
+                    disabled={loading || !imageLoaded || !asciiArt}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    تنزيل النص
+                  </Button>
+                </div>
+
                 <Button
                   onClick={handleEmailSubmissionTrigger} // Always trigger email flow
                   className="flex-1 bg-stone-700 hover:bg-stone-600 text-stone-200 border-stone-600"
@@ -669,14 +824,24 @@ export default function AsciiConverter() {
                   إرسال فن ASCII (نص و PNG)
                 </Button>
 
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 bg-stone-700 hover:bg-stone-600 text-stone-200 border-stone-600"
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  تحميل صورة
-                </Button>
+                <div className="flex flex-col md:flex-row gap-2">
+                  <Button
+                    onClick={openPhotoPicker}
+                    className="flex-1 bg-stone-700 hover:bg-stone-600 text-stone-200 border-stone-600"
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    اختيار من الصور
+                  </Button>
+                  <Button
+                    onClick={openCamera}
+                    className="flex-1 bg-stone-700 hover:bg-stone-600 text-stone-200 border-stone-600"
+                  >
+                    <Camera className="h-4 w-4 mr-2" />
+                    التقاط صورة
+                  </Button>
+                </div>
               </div>
+              
 
               {/* Arabic Description Section */}
               <div className="space-y-2 border-t border-stone-700 pt-4 text-right">

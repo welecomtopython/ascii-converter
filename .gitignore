@@ -3,3 +3,7 @@ out/
 node_modules/
 .env
 .env.local
+/public/temp-ascii-images/*
+
+# استثناء ملف .gitkeep عشان المجلد يفضل موجود
+!/public/temp-ascii-images/.gitkeep

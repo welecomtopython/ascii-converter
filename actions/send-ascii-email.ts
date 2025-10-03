@@ -1,9 +1,6 @@
 "use server"
 
 import nodemailer from "nodemailer"
-import { promises as fs } from "fs"
-import path from "path"
-import crypto from "crypto" // For generating random string
 
 interface SendEmailResult {
   success: boolean
@@ -23,13 +20,27 @@ export async function sendAsciiArtEmail(
   username: string,
   asciiArtText: string,
   asciiArtPngDataURL: string,
+  
 ): Promise<SendEmailResult> {
+  console.log("Server action called with:", {
+    email,
+    username,
+    asciiTextLength: asciiArtText?.length || 0,
+    pngDataUrlLength: asciiArtPngDataURL?.length || 0,
+    pngDataUrlPrefix: asciiArtPngDataURL?.substring(0, 50) || "undefined"
+  })
+
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     console.error("EMAIL_USER or EMAIL_PASS environment variables are not set.")
     return { success: false, message: "خطأ في إعداد الخادم: بيانات اعتماد البريد الإلكتروني مفقودة." } // Arabic: Server setup error: Email credentials missing.
   }
 
   try {
+    if (!asciiArtPngDataURL || !asciiArtPngDataURL.includes(',')) {
+      console.error("Invalid PNG data URL format:", asciiArtPngDataURL?.substring(0, 100))
+      return { success: false, message: "خطأ: تنسيق بيانات الصورة غير صالح." } // Arabic: Error: Invalid image data format.
+    }
+
     const base64Data = asciiArtPngDataURL.split(",")[1]
     if (!base64Data) {
       console.error("Base64 data is empty after splitting. This means the image data URL was invalid or empty.")
@@ -42,34 +53,28 @@ export async function sendAsciiArtEmail(
       return { success: false, message: "خطأ: لم يتم إنشاء مخزن مؤقت للصورة." } // Arabic: Error: Image buffer not created.
     }
 
-    // --- Save image to public folder ---
-    const uploadDir = path.join(process.cwd(), "public", "temp-ascii-images")
-    await fs.mkdir(uploadDir, { recursive: true }) // Ensure directory exists
-
-    const timestamp = Date.now()
-    const randomString = crypto.randomBytes(4).toString("hex") // 8 characters
-    const filename = `${timestamp}_${randomString}.png`
-    const filePath = path.join(uploadDir, filename)
-    // The URL will now point to our new API route
-    const downloadApiUrl = `/api/download/${filename}`
-
-    await fs.writeFile(filePath, pngBuffer)
-    console.log(`Image saved to: ${filePath}`)
-    // --- End save image ---
+    console.log(`PNG buffer size: ${pngBuffer.length} bytes`)
 
     const mailOptions = {
+      // <pre style="font-family: monospace; background-color: #000; color: #fff; padding: 10px; border-radius: 5px; overflow-x: auto;">${asciiArtText}</pre>
       from: process.env.EMAIL_USER,
       to: email,
       subject: `فن ASCII الخاص بك من ${username}`, // Arabic: Your ASCII Art from [username]
       html: `
         <p dir="rtl">مرحباً ${username},</p>
         <p dir="rtl">شكرًا لك على استخدام محول فن ASCII الخاص بنا! إليك فن ASCII الذي طلبته:</p>
-        <pre style="font-family: monospace; background-color: #000; color: #fff; padding: 10px; border-radius: 5px; overflow-x: auto;">${asciiArtText}</pre>
-        <p dir="rtl">يمكنك تنزيل نسخة PNG من فن ASCII الخاص بك من الرابط التالي:</p>
-        <p dir="rtl"><a href="${process.env.NEXT_PUBLIC_VERCEL_URL || "http://192.168.1.2:3000"}${downloadApiUrl}" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">تنزيل فن ASCII (PNG)</a></p>
+        <p dir="rtl">تم إرفاق نسخة PNG من فن ASCII الخاص بك مع هذا البريد الإلكتروني.</p>
         <p dir="rtl">نأمل أن تستمتع به!</p>
         <p dir="rtl">مع خالص التقدير،<br>فريق محول فن ASCII</p>
       `,
+      attachments: [
+        {
+          filename: `ascii-art-${username}-${Date.now()}.png`,
+          content: pngBuffer,
+          contentType: 'image/png',
+          cid: 'ascii-art-image' // Content ID for inline images if needed
+        }
+      ]
     }
 
     const info = await transporter.sendMail(mailOptions)

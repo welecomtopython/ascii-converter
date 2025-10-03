@@ -79,15 +79,38 @@ export function EmailSubmissionModal({
       return
     }
 
+    // Check if we have valid data before sending
+    if (!asciiArtText || !asciiArtPngDataURL) {
+      setMessage("خطأ: لا توجد بيانات ASCII للإرسال.") // Arabic: Error: No ASCII data to send.
+      setIsSuccess(false)
+      return
+    }
+
+    console.log("Starting email submission:", {
+      email,
+      username,
+      asciiTextLength: asciiArtText.length,
+      pngDataUrlLength: asciiArtPngDataURL.length,
+      userAgent: navigator.userAgent,
+      isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    })
+
     startTransition(async () => {
-      const result = await sendAsciiArtEmail(email, username, asciiArtText, asciiArtPngDataURL)
-      setMessage(result.message)
-      setIsSuccess(result.success)
-      if (result.success) {
-        // Save email and username to localStorage on success
-        localStorage.setItem(SESSION_EMAIL_KEY, email)
-        localStorage.setItem(SESSION_USERNAME_KEY, username)
-        onSuccess() // Trigger success callback in parent
+      try {
+        const result = await sendAsciiArtEmail(email, username, asciiArtText, asciiArtPngDataURL)
+        console.log("Email submission result:", result)
+        setMessage(result.message)
+        setIsSuccess(result.success)
+        if (result.success) {
+          // Save email and username to localStorage on success
+          localStorage.setItem(SESSION_EMAIL_KEY, email)
+          localStorage.setItem(SESSION_USERNAME_KEY, username)
+          onSuccess() // Trigger success callback in parent
+        }
+      } catch (error) {
+        console.error("Email submission error:", error)
+        setMessage("حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.") // Arabic: An unexpected error occurred. Please try again.
+        setIsSuccess(false)
       }
     })
   }
