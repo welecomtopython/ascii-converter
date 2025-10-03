@@ -17,7 +17,7 @@ export async function GET(request: Request, { params }: { params: { filename: st
     const contentType = "image/png"
 
     // Create a response with the file buffer and appropriate headers
-    const response = new NextResponse(fileBuffer, {
+    const response = new NextResponse(fileBuffer as BodyInit, {
       headers: {
         "Content-Type": contentType,
         "Content-Disposition": `attachment; filename="${filename}"`, // Forces download

@@ -10,3 +10,4 @@ export async function GET() {
     return NextResponse.json({ message: result.message }, { status: 500 })
   }
 }
+
